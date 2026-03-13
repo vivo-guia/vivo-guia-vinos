@@ -295,6 +295,47 @@ body{font-family:"Nunito",sans-serif;background:var(--black);color:var(--white);
         <div class="fg"><label class="flbl">Nombre completo</label><input class="finp" type="text" placeholder="Tu nombre"></div>
         <div class="fg"><label class="flbl">Email</label><input class="finp" type="email" placeholder="tu@email.com"></div>
         <div class="fg"><label class="flbl">Fecha de nacimiento</label><input class="finp" type="date"></div>
+        <div style="display:flex;gap:.6rem;">
+          <div class="fg" style="flex:1;">
+            <label class="flbl">Sexo</label>
+            <select class="finp" id="reg-sexo" style="cursor:pointer;">
+              <option value="">Seleccioná</option>
+              <option value="M">Masculino</option>
+              <option value="F">Femenino</option>
+              <option value="X">No especificado</option>
+            </select>
+          </div>
+          <div class="fg" style="flex:1;">
+            <label class="flbl">Provincia</label>
+            <select class="finp" id="reg-prov" style="cursor:pointer;">
+              <option value="">Seleccioná</option>
+              <option>Ciudad de Bs. As.</option>
+              <option>Buenos Aires</option>
+              <option>Córdoba</option>
+              <option>Santa Fe</option>
+              <option>Mendoza</option>
+              <option>Tucumán</option>
+              <option>Salta</option>
+              <option>Entre Ríos</option>
+              <option>Misiones</option>
+              <option>Chaco</option>
+              <option>Corrientes</option>
+              <option>Santiago del Estero</option>
+              <option>San Juan</option>
+              <option>Jujuy</option>
+              <option>Río Negro</option>
+              <option>Neuquén</option>
+              <option>Formosa</option>
+              <option>Chubut</option>
+              <option>San Luis</option>
+              <option>Catamarca</option>
+              <option>La Rioja</option>
+              <option>La Pampa</option>
+              <option>Santa Cruz</option>
+              <option>Tierra del Fuego</option>
+            </select>
+          </div>
+        </div>
         <div class="fg"><label class="flbl">Contraseña</label><input class="finp" type="password" placeholder="Mínimo 8 caracteres"></div>
         <button class="btn-full" onclick="tryRegister()">Crear cuenta</button>
         <div class="age-confirm">Confirmo que soy mayor de 18 años y acepto los términos de uso.</div>
@@ -439,8 +480,8 @@ body{font-family:"Nunito",sans-serif;background:var(--black);color:var(--white);
       <div id="admin-period-badge" style="font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--sky);background:rgba(91,184,245,.1);border:1px solid rgba(91,184,245,.2);border-radius:3px;padding:.22rem .6rem;white-space:nowrap;">Marzo 2026</div>
     </div>
     <div class="stats-grid">
-      <div class="stat sky"><div class="stat-n" id="st-usuarios">1.248</div><div class="stat-l">Usuarios activos</div></div>
-      <div class="stat vio"><div class="stat-n" id="st-busquedas">4.831</div><div class="stat-l">Búsquedas</div></div>
+      <div class="stat sky"><div class="stat-n" id="st-usuarios">1.248</div><div class="stat-l">Cantidad de usuarios</div></div>
+      <div class="stat vio"><div class="stat-n" id="st-busquedas">4.831</div><div class="stat-l">Cantidad de lugares</div></div>
       <div class="stat wht"><div class="stat-n" id="st-resenas">312</div><div class="stat-l">Reseñas nuevas</div></div>
       <div class="stat gry"><div class="stat-n" id="st-vinos">87</div><div class="stat-l">Vinos en catálogo</div></div>
     </div>
@@ -586,10 +627,22 @@ window.tryRegister = async function() {
   const today = new Date();
   const age = today.getFullYear() - born.getFullYear() - (today < new Date(today.getFullYear(), born.getMonth(), born.getDate()) ? 1 : 0);
   if (age < 18) { showToast("Debés ser mayor de 18 años para registrarte"); return; }
+  const sexo = document.getElementById("reg-sexo")?.value || "";
+  const prov  = document.getElementById("reg-prov")?.value  || "";
   try {
     showLoader("Creando cuenta...");
     const cred = await createUserWithEmailAndPassword(auth, email, pass);
     await updateProfile(cred.user, { displayName: name });
+    // Save profile data to Firestore
+    const { setDoc, doc } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
+    await setDoc(doc(db, "usuarios", cred.user.uid), {
+      nombre:    name,
+      email:     email,
+      sexo:      sexo,
+      provincia: prov,
+      nacimiento: dob,
+      creadoEn:  new Date().toISOString(),
+    });
     hideLoader();
     rawGoTo("screen-home");
   } catch(e) {
@@ -1157,8 +1210,11 @@ window.updateAdmin = async function() {
     document.getElementById("st-resenas").textContent = filtered.length.toLocaleString("es-AR");
 
     // Auth users count — not accessible from client SDK, show placeholder
+    // Real user count from Auth not accessible client-side — show placeholder
     document.getElementById("st-usuarios").textContent = "—";
-    document.getElementById("st-busquedas").textContent = "—";
+    // Real lugar count from sheet
+    const totalLugares = ROWS.length ? [...new Set(ROWS.map(r=>r.lugar))].length : "—";
+    document.getElementById("st-busquedas").textContent = totalLugares;
 
     // Bar chart — reviews per day last 7 days
     const days = [];
@@ -1173,9 +1229,16 @@ window.updateAdmin = async function() {
       days.push(count);
     }
     const maxD = Math.max(...days, 1);
+    // Day labels for last 7 days
+    const dayLabels = [];
+    for(let i=6;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);dayLabels.push(DIAS_S[d.getDay()===0?6:d.getDay()-1]);}
     document.getElementById("bar-act").innerHTML = days.map((v,i)=>{
       const h = Math.round((v/maxD)*60)+4;
-      return `<div class="bc"><div class="bar ${i===5||i===6?"mix":"sky"}" style="height:${h}px"></div><div class="bar-l">${DIAS_S[i]}</div></div>`;
+      return `<div class="bc">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:.58rem;color:var(--sky);margin-bottom:.15rem;text-align:center;">${v||""}</div>
+        <div class="bar ${i===5||i===6?"mix":"sky"}" style="height:${h}px"></div>
+        <div class="bar-l">${dayLabels[i]}</div>
+      </div>`;
     }).join("");
 
     // Top lugares por reseñas
@@ -1214,41 +1277,77 @@ function pctBar(label,pct,color){
     </div></div>`;
 }
 
-function renderDemografia(mes,anio){
-  const seed=(mes||6)+(parseInt(anio||2026)%10);
-  const fem=38+(seed%8);
-  document.getElementById("demo-sexo").innerHTML=
-    pctBar("Masculino",100-fem-4,"var(--sky)")+pctBar("Femenino",fem,"var(--vio-lt)")+pctBar("No especif.",4,"var(--gray-ui)");
-  const ed=[{r:"18–24",p:12+(seed%5),c:"var(--sky-lt)"},{r:"25–34",p:28+(seed%6),c:"var(--sky)"},{r:"35–44",p:25+(seed%4),c:"var(--sky-dk)"},{r:"45–54",p:18+(seed%3),c:"var(--violet)"},{r:"55+",p:17-(seed%4),c:"var(--vio-lt)"}];
-  const et=ed.reduce((a,e)=>a+e.p,0);
-  document.getElementById("demo-edad").innerHTML=ed.map(e=>pctBar(e.r,Math.round(e.p/et*100),e.c)).join("");
-  const geo=[{n:"Ciudad de Bs. As.",p:34+(seed%5),c:"var(--sky)"},{n:"Buenos Aires",p:22+(seed%4),c:"var(--sky-dk)"},{n:"Mendoza",p:14+(seed%3),c:"var(--violet)"},{n:"Córdoba",p:11+(seed%3),c:"var(--vio-lt)"},{n:"Santa Fe",p:8+(seed%3),c:"var(--gray-ui)"},{n:"Salta",p:5+(seed%2),c:"var(--sky-lt)"},{n:"Resto",p:6,c:"var(--gray-lt)"}];
-  const gt=geo.reduce((a,e)=>a+e.p,0);
-  document.getElementById("demo-geo").innerHTML=geo.map(e=>pctBar(e.n,Math.round(e.p/gt*100),e.c)).join("");
+async function renderDemografia(mes,anio){
+  const sinDatos = `<div style="font-size:.8rem;color:var(--gray-ui);font-style:italic;padding:.4rem 0;">Sin datos aún — se completa con los registros de usuarios.</div>`;
+  try {
+    const { collection: col, getDocs: gd } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
+    const snap = await gd(col(db,"usuarios"));
+    const users = snap.docs.map(d=>d.data());
+    if (!users.length) {
+      document.getElementById("demo-sexo").innerHTML = sinDatos;
+      document.getElementById("demo-edad").innerHTML = sinDatos;
+      document.getElementById("demo-geo").innerHTML  = sinDatos;
+      document.getElementById("st-usuarios").textContent = "0";
+      return;
+    }
+    document.getElementById("st-usuarios").textContent = users.length.toLocaleString("es-AR");
+
+    // Sexo
+    const sexoCount = {M:0, F:0, X:0};
+    users.forEach(u => { const s = u.sexo||"X"; sexoCount[s]=(sexoCount[s]||0)+1; });
+    const total = users.length;
+    document.getElementById("demo-sexo").innerHTML =
+      pctBar("Masculino",    Math.round(sexoCount.M/total*100), "var(--sky)") +
+      pctBar("Femenino",     Math.round(sexoCount.F/total*100), "var(--vio-lt)") +
+      pctBar("No especif.",  Math.round(sexoCount.X/total*100), "var(--gray-ui)");
+
+    // Edad
+    const edades = {a:0,b:0,c:0,d:0,e:0};
+    users.forEach(u => {
+      if (!u.nacimiento) return;
+      const age = new Date().getFullYear() - new Date(u.nacimiento).getFullYear();
+      if      (age < 25) edades.a++;
+      else if (age < 35) edades.b++;
+      else if (age < 45) edades.c++;
+      else if (age < 55) edades.d++;
+      else               edades.e++;
+    });
+    const edTotal = Object.values(edades).reduce((a,b)=>a+b,0)||1;
+    document.getElementById("demo-edad").innerHTML =
+      pctBar("18–24", Math.round(edades.a/edTotal*100), "var(--sky-lt)") +
+      pctBar("25–34", Math.round(edades.b/edTotal*100), "var(--sky)") +
+      pctBar("35–44", Math.round(edades.c/edTotal*100), "var(--sky-dk)") +
+      pctBar("45–54", Math.round(edades.d/edTotal*100), "var(--violet)") +
+      pctBar("55+",   Math.round(edades.e/edTotal*100), "var(--vio-lt)");
+
+    // Geografía
+    const geoCount = {};
+    users.forEach(u => { if(u.provincia) geoCount[u.provincia]=(geoCount[u.provincia]||0)+1; });
+    const geoTotal = Object.values(geoCount).reduce((a,b)=>a+b,0)||1;
+    const colors = ["var(--sky)","var(--sky-dk)","var(--violet)","var(--vio-lt)","var(--gray-ui)","var(--sky-lt)","var(--gray-lt)"];
+    document.getElementById("demo-geo").innerHTML = Object.entries(geoCount)
+      .sort((a,b)=>b[1]-a[1]).slice(0,7)
+      .map(([prov,cnt],i) => pctBar(prov, Math.round(cnt/geoTotal*100), colors[i]||"var(--gray-ui)"))
+      .join("") || sinDatos;
+
+  } catch(e) {
+    console.warn("Demo error:", e);
+    document.getElementById("demo-sexo").innerHTML = sinDatos;
+    document.getElementById("demo-edad").innerHTML = sinDatos;
+    document.getElementById("demo-geo").innerHTML  = sinDatos;
+  }
 }
 
 function renderRanking(){
-  const users=[
-    {e:"martina.g@gmail.com",b:48,r:12,v:34,badge:"🥇"},{e:"carlos.r@hotmail.com",b:42,r:8,v:28,badge:"🥈"},
-    {e:"sofia.k@gmail.com",b:38,r:11,v:25,badge:"🥉"},{e:"ramiro.v@outlook.com",b:31,r:6,v:22,badge:"4°"},
-  ];
-  document.getElementById("admin-ranking").innerHTML=users.map((u,i)=>`
-    <div class="act-row" style="${i<3?"background:rgba(91,184,245,.04);":""}">
-      <div class="act-ico ${i<3?"sky":"wht"}">${u.badge}</div>
-      <div class="act-txt"><strong>${u.e}</strong>
-        <div style="display:flex;gap:.6rem;margin-top:.2rem;">
-          <span style="font-size:.72rem;color:var(--sky);">🔍 ${u.b}</span>
-          <span style="font-size:.72rem;color:var(--vio-lt);">⭐ ${u.r} reseñas</span>
-          <span style="font-size:.72rem;color:var(--gray-ui);">📍 ${u.v} visitas</span>
-        </div></div>
-      <div style="font-family:'JetBrains Mono',monospace;font-size:.75rem;color:var(--sky);background:rgba(91,184,245,.1);border:1px solid rgba(91,184,245,.2);border-radius:3px;padding:.15rem .42rem;flex-shrink:0;">${u.b+u.r+u.v} pts</div>
-    </div>`).join("");
+  // Ranking real basado en cantidad de reseñas por usuario (de ratingsCache)
+  // Se actualiza desde loadAdminReviews con datos reales
+  document.getElementById("admin-ranking").innerHTML =
+    '<div class="act-row" style="color:var(--gray-ui);font-size:.82rem;padding:.8rem 1.25rem;">Se calcula desde las reseñas — aparece al cargar el panel.</div>';
 }
 
 function renderBusquedas(){
-  document.getElementById("admin-busquedas").innerHTML=
-    [["🍷","Malbec",234],["🍷","Tinto Mendoza",189],["🥂","Espumante",156],["🍾","Blend Reserva",98],["🍷","Torrontés Salta",74]]
-    .map(([ico,t,n],i)=>`<div class="act-row"><div class="act-ico sky">${ico}</div><div class="act-txt"><strong>${t}</strong> · ${n} búsquedas</div><div class="act-time">#${i+1}</div></div>`).join("");
+  document.getElementById("admin-busquedas").innerHTML =
+    '<div class="act-row" style="color:var(--gray-ui);font-size:.82rem;padding:.8rem 1.25rem;">Requiere trackeo de búsquedas — disponible en próxima versión.</div>';
 }
 function renderLocales(){}
 function renderActividad(){ loadAdminReviews(); }
@@ -1263,6 +1362,25 @@ async function loadAdminReviews() {
     const snap = await gd(q);
     const revs = snap.docs.map(d => ({ ...d.data(), docId: d.id }));
     document.getElementById("admin-rev-count").textContent = `(${revs.length} total)`;
+
+    // Build real ranking from reviews
+    const userRevCount = {};
+    revs.forEach(r => {
+      const u = r.userName || "Usuario";
+      userRevCount[u] = (userRevCount[u]||0) + 1;
+    });
+    const rankingUsers = Object.entries(userRevCount).sort((a,b)=>b[1]-a[1]).slice(0,5);
+    const badges = ["🥇","🥈","🥉","4°","5°"];
+    document.getElementById("admin-ranking").innerHTML = rankingUsers.length
+      ? rankingUsers.map(([name,count],i)=>`
+          <div class="act-row" style="${i<3?"background:rgba(91,184,245,.04);":""}">
+            <div class="act-ico ${i<3?"sky":"wht"}">${badges[i]}</div>
+            <div class="act-txt"><strong>${name}</strong>
+              <div style="margin-top:.2rem;"><span style="font-size:.72rem;color:var(--vio-lt);">⭐ ${count} reseña${count!==1?"s":""}</span></div>
+            </div>
+          </div>`).join("")
+      : '<div class="act-row" style="color:var(--gray-ui);font-size:.82rem;padding:.8rem 1.25rem;">Sin datos aún.</div>';
+
     if (!revs.length) {
       container.innerHTML = '<div class="act-row" style="color:var(--gray-ui);font-size:.82rem;padding:.8rem 1.25rem;">No hay reseñas todavía.</div>';
       return;
