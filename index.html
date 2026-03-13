@@ -506,6 +506,7 @@ let selectedStars = 0;
 let currentUser   = null;   // Firebase user object
 let currentLugar  = "";
 const openCards   = new Set();
+const ratingsCache = {}; // lugar → {avg, count}
 
 // ══ AUTH STATE LISTENER ═══════════════════════════════════
 onAuthStateChanged(auth, user => {
@@ -627,10 +628,29 @@ function authError(code) {
 }
 
 // ══ ADMIN ════════════════════════════════════════════════
+let isAdminMode = false;
 window.goAdmin = function() {
   const pin = prompt("Ingresá el código de administrador:");
-  if (pin === "vivo2026") rawGoTo("screen-admin");
+  if (pin === "vivo2026") { isAdminMode = true; rawGoTo("screen-admin"); }
   else if (pin !== null)  showToast("Código incorrecto");
+};
+
+window.deleteReview = async function(docId, cardId) {
+  if (!confirm("¿Borrar esta reseña?")) return;
+  try {
+    const { deleteDoc, doc } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
+    await deleteDoc(doc(db, "reviews", docId));
+    document.getElementById(cardId)?.remove();
+    // Update cache
+    if (ratingsCache[currentLugar]) {
+      await loadAllRatings();
+      await loadReviews(currentLugar);
+    }
+    showToast("Reseña eliminada");
+  } catch(e) {
+    console.error(e);
+    showToast("No se pudo eliminar la reseña");
+  }
 };
 
 // ══ CSV LOADER ════════════════════════════════════════════
@@ -719,8 +739,28 @@ async function loadSheet() {
   } finally {
     hideLoader();
     buildFilters();
+    await loadAllRatings();
     renderResults();
     updateAdmin();
+  }
+}
+
+async function loadAllRatings() {
+  try {
+    const snap = await getDocs(collection(db, "reviews"));
+    snap.docs.forEach(d => {
+      const r = d.data();
+      if (!r.lugar) return;
+      if (!ratingsCache[r.lugar]) ratingsCache[r.lugar] = { sum: 0, count: 0 };
+      ratingsCache[r.lugar].sum   += r.stars || 0;
+      ratingsCache[r.lugar].count += 1;
+    });
+    // Compute avg
+    Object.keys(ratingsCache).forEach(k => {
+      ratingsCache[k].avg = Math.round((ratingsCache[k].sum / ratingsCache[k].count) * 10) / 10;
+    });
+  } catch(e) {
+    console.warn("No se pudieron cargar ratings:", e);
   }
 }
 
@@ -911,7 +951,12 @@ function renderPlaces() {
           <span class="prow-loc">${r.barrio} · ${r.prov_lugar}</span>
           <span class="prow-tel">📞 ${r.tel}</span>
           ${r.web?`<a class="prow-web" href="https://${r.web}" target="_blank">🌐</a>`:""}
-          ${starsHTML(r.place_rating,".72rem")}<span class="sn">${r.place_rating||""} (${r.place_reviews})</span>
+          ${(()=>{
+            const rc = ratingsCache[r.lugar];
+            const avg = rc ? rc.avg : r.place_rating;
+            const cnt = rc ? rc.count : r.place_reviews;
+            return starsHTML(avg,".72rem") + `<span class="sn">${avg||""} (${cnt} reseña${cnt!==1?"s":""})</span>`;
+          })()}
         </div>
         <div class="prow-carta">Carta: <span>${snippet}</span></div>
       </div></div>`;
@@ -958,7 +1003,7 @@ async function loadReviews(lugar) {
       where("lugar","==",lugar)
     );
     const snap = await getDocs(q);
-    const revs = snap.docs.map(d => d.data())
+    const revs = snap.docs.map(d => ({ ...d.data(), docId: d.id }))
       .sort((a,b) => {
         const ta = a.createdAt?.seconds || 0;
         const tb = b.createdAt?.seconds || 0;
@@ -991,10 +1036,13 @@ function renderReviews(revs) {
   }
 
   document.getElementById("ph-reviews").innerHTML = revs.length
-    ? revs.map(r=>`<div class="rev-card">
+    ? revs.map((r,i)=>`<div class="rev-card" id="rev-card-${i}">
         <div class="rc-head">
           <div><div class="rc-user">${r.userName||"Usuario"}</div><div style="display:flex;gap:.1rem;margin-top:.2rem;">${starsHTML(r.stars,".78rem")}</div></div>
-          <div class="rc-date">${r.createdAt?.toDate ? r.createdAt.toDate().toLocaleDateString("es-AR") : "recién"}</div>
+          <div style="display:flex;align-items:center;gap:.5rem;">
+            <div class="rc-date">${r.createdAt?.toDate ? r.createdAt.toDate().toLocaleDateString("es-AR") : "recién"}</div>
+            ${r.docId && isAdminMode ? `<button onclick="deleteReview('${r.docId}','rev-card-${i}')" style="background:rgba(255,60,60,.12);border:1px solid rgba(255,60,60,.25);color:#ff6b6b;border-radius:4px;padding:.15rem .45rem;font-size:.68rem;cursor:pointer;font-family:'Syne',sans-serif;font-weight:600;">✕ Borrar</button>` : ""}
+          </div>
         </div>
         <div class="rc-txt">"${r.txt}"</div></div>`).join("")
     : '<div class="no-results" style="padding:1.5rem 0;">Todavía no hay reseñas. ¡Sé el primero!</div>';
@@ -1035,6 +1083,11 @@ window.submitReview = async function() {
     showToast("¡Reseña publicada! Gracias 🍷");
     setStars(0);
     document.getElementById("revText").value = "";
+    // Update ratings cache
+    if (!ratingsCache[currentLugar]) ratingsCache[currentLugar] = { sum: 0, count: 0, avg: 0 };
+    ratingsCache[currentLugar].sum   += selectedStars;
+    ratingsCache[currentLugar].count += 1;
+    ratingsCache[currentLugar].avg    = Math.round((ratingsCache[currentLugar].sum / ratingsCache[currentLugar].count) * 10) / 10;
     // Recargar desde Firestore para actualizar promedio y total
     try { await loadReviews(currentLugar); } catch(e2) { /* ya se muestra en DOM */ }
   } catch(e) {
